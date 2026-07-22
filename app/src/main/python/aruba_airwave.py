@@ -104,5 +104,5 @@ if __name__ == "__main__":
         
         floor_data_patron.append(dataPatron)
     
-    # Pushing the data to LibUtils backend directly, instead of relying on LibInsight, since LibInsight often responds with stale data
+    # Pushing the data to LibUtils backend directly.
     response = requests.post("http://rtod.library.brocku.ca:32777/busylib", data= {"jsonString": json.dumps(floor_data_patron)})
