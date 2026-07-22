@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Floor Occupancy Stats</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=1024, initial-scale=1">
+    <link rel="icon" th:href="@{/icons/clipboard-regular.svg}">
+    <link th:href="@{/css/bootstrap.min.css}" rel="stylesheet" crossorigin="anonymous">
+    <style>
+        .noise-card {
+            min-height: 120px;
+        }
+
+        @font-face {
+            font-family: "Circular";
+            src: url("/fonts/circular/CircularXX-Regular.otf");
+        }
+
+        @font-face {
+            font-family: "Circular";
+            src: url("/fonts/circular/CircularXX-Black.otf");
+            font-weight: bold;
+        }
+
+        body {
+            font-family: "Circular";
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container vh-100">
+        <div class="row align-items-center vh-100">
+            <div class="container">
+                <div class="row mt-3">
+                    <div class="col-lg-8">
+                        <h1>Find your spot in the Library</h1>
+                    </div>
+                    <div class="col-lg-2">
+                        <div class="row align-items-center">
+                            <div class="col-lg-6">
+                                <h6 class="text-end" style="color: #606060;">Scan the QR code to learn more</h6>
+                            </div>
+                            <div class="col-lg-6">                                    
+                                <img class="img-fluid" th:src="@{/icons/wifi-qr-code.svg}"
+                                aria-label="Brock University Library logo" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2">
+                        <img class="img-fluid" th:src="@{/icons/brocku-lib-logo.png}"
+                            aria-label="Brock University Library logo" />
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-lg-12">
+                        <h3 id="countText"></h3>
+                    </div>
+                </div>
+                <div class="row justify-content-between">
+                    <div class="col-lg-12">
+                        <canvas id="chart" height="600"
+                            aria-label="A chart with information on how busy each floor and subsection of the library is. Right now "></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script th:src="@{/js/chart.min.js}"></script>
+    <script th:src="@{/js/datalabels.js}"></script>
+    <script>
+        const maxMap = {
+            2: 275,
+            3: 75,
+            4: 150,
+            5: 100,
+            6: 125,
+            7: 125,
+            8: 75,
+            9: 75,
+            10: 50,
+            11: 50,
+            12: 100,
+            20: 25,
+            30: 25
+        }
+
+        const zoneMap = {
+            2: " - Group, Quiet, and Silent Study Areas",
+            3: "",
+            4: "",
+            5: " - Group, Quiet, and Silent Study Areas",
+            6: " - Group and Quiet Study Areas",
+            7: " - Group and Quiet Study Areas",
+            8: " - Quiet Zone",
+            9: " - Silent Zone",
+            10: " - Silent Zone",
+            11: "",
+            12: "",
+            20: " - Group Study Area",
+            30: ""
+        }
+
+        let jsonData = [(${ data })]["payload"]["records"];
+        const lastUpdatedOn = jsonData[0]["_start_date"];
+
+        if (jsonData.length > 12) {
+            jsonData = jsonData.splice(0, 12);
+        }
+
+        let patronCount = jsonData.filter(e => (e["Floor"] != 3) && (e["Floor"] != 4) && (e["Floor"] != 11) && (e["Floor"] != 30) && (e["Floor"] < 15))
+            .map(e => e["Count"])
+            .reduce((sum, num) => sum + num, 0);
+        
+        // document.getElementById("countText").textContent = "Approximately " + Math.round(patronCount) + " patrons in James A. Gibson Library";
+        document.getElementById("countText").textContent = "Right now, there are approximately " + Math.round(patronCount) + " people in the Library";
+
+        let dataMapped = jsonData.filter(e => (e["Floor"] != 3) && (e["Floor"] != 4) && (e["Floor"] != 11) && (e["Floor"] != 30))
+            .sort((o1, o2) => o2["Floor"] - o1["Floor"])
+            .map(e => {
+                let label = "Floor " + e["Floor"];
+                switch (e["Floor"]) {
+                    case 2:
+                    case '2':
+                        label = "  Learning Commons"; // Two spaces at the front is basically to fix a weird problem with chart.js, that crops the leading `L` in the first load.
+                        break;
+                    case 20:
+                    case '20':
+                        label = "Makerspace";
+                        break;
+                    case 30:
+                    case '30':
+                        label = "MDGL";
+                        break;
+                }
+
+                let ratio = e["Count"] / maxMap[e["Floor"]];
+                ratio = (ratio < 0.09) ? 0.09 : ratio;
+                ratio = (ratio > 0.96) ? 0.96 : ratio;
+
+                return {
+                    "y": label,
+                    "ratio": ratio,
+                    "floor": e["Floor"]
+                }
+            });
+
+        // dataMapped.push(dataMapped.shift());//Pushing MDGL to the end
+        dataMapped.push(dataMapped.shift());//Pushing Makerspace to the end
+
+        function interpolateColor(ratio) {
+            // Define soft shades of red and green
+            const softRed = { r: 255, g: 120, b: 120 };   // Soft red
+            const softGreen = { r: 102, g: 255, b: 102 }; // Soft green
+
+            // Calculate the interpolated color components
+            const red = Math.round(softRed.r * ratio + softGreen.r * (1 - ratio));
+            const green = Math.round(softRed.g * ratio + softGreen.g * (1 - ratio));
+            const blue = Math.round(softRed.b * ratio + softGreen.b * (1 - ratio));
+
+            // Format the RGB string
+            return `rgba(${red}, ${green}, ${blue}, 0.8)`;
+        }
+
+        let clonedData = JSON.parse(JSON.stringify(dataMapped));
+        clonedData = clonedData.map(e => {
+            e["ratio"] = 1.0;
+            return e;
+        });
+
+        const arbitraryLine = {
+            id: 'arbitraryLine',
+            afterDatasetsDraw(chart, args, plugins) {
+                const { ctx, scales: { y }, chartArea: { left, right } } = chart;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1;
+
+                let midPoint = (y.getPixelForValue(6) + y.getPixelForValue(7)) / 2;
+
+                ctx.moveTo(left - 200, midPoint);
+                ctx.lineTo(right + 50, midPoint);
+                ctx.stroke();
+
+                // midPoint = (y.getPixelForValue(7) + y.getPixelForValue(8)) / 2;
+                // ctx.moveTo(left - 200, midPoint);
+                // ctx.lineTo(right + 50, midPoint);
+                // ctx.stroke();
+            }
+        }
+
+        const ctx = document.getElementById("chart").getContext("2d");
+        const myChart = new Chart(ctx, {
+            plugins: [ChartDataLabels, arbitraryLine],
+            type: 'bar',
+            data: {
+                datasets: [
+                    {
+                        label: 'Overlay',
+                        data: clonedData,
+                        backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                        borderColor: 'rgba(128, 128, 128, 1)',
+                        borderWidth: 2,
+                        hoverOffset: 3,
+                        categoryPercentage: 0.9
+                    },
+                    {
+                        label: "WiFi data",
+                        data: dataMapped,
+                        backgroundColor: (context) => {
+                            let color = "rgba(245, 75, 75, 0.8)";
+
+                            if (context.raw["ratio"] < 0.76) color = "rgba(245, 120, 0, 0.8)";
+                            if (context.raw["ratio"] < 0.51) color = "rgba(245, 245, 80, 0.8)";
+                            if (context.raw["ratio"] < 0.25) color = "rgba(100, 245, 0, 0.8)";
+
+                            return color;
+                        },
+                        hoverOffset: 4,
+                        categoryPercentage: 0.83
+                    }
+                ]
+            },
+            options: {
+                parsing: {
+                    xAxisKey: "ratio"
+                },
+                hover: {mode: null},
+                maintainAspectRatio: false,
+                indexAxis: "y",
+                borderSkipped: false,
+                borderRadius: {
+                    topLeft: 20,
+                    topRight: 20,
+                    bottomLeft: 20,
+                    bottomRight: 20
+                },
+                plugins: {
+                    tooltip: {
+                        enabled: false
+                    },
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: "Last updated on: " + lastUpdatedOn,
+                        position: 'bottom'
+                    },
+                    datalabels: {
+                        formatter: (val, ctx) => {
+                            if (ctx.datasetIndex === 1) {
+                                capacityPercentage = Math.round(val.ratio * 100);
+                                capacityPercentageText = capacityPercentage + "%";
+                                
+                                if (capacityPercentage < 10) {
+                                    capacityPercentageText = "< 10%";
+                                } else if (capacityPercentage > 95) {
+                                    capacityPercentageText = "> 95%";
+                                }
+
+                                // let label = "Very busy" + capacityPercentageText;
+
+                                // if (val.ratio < 0.76) label = "Busy" + capacityPercentageText;
+                                // if (val.ratio < 0.51) label = "A little busy" + capacityPercentageText;
+                                // if (val.ratio < 0.25) label = "Not busy" + capacityPercentageText;
+
+                                let label = capacityPercentageText;
+
+                                document.getElementById("chart").ariaLabel = document.getElementById("chart").ariaLabel + (val["y"] + " is " + label + ". ");
+
+                                return capacityPercentageText + zoneMap[val.floor];
+                            }
+
+                            return "";
+                        },
+                        anchor: "start",
+                        align: "end",
+                        offset: 15,
+                        color: "rgb(0,0,0)",
+                        font: {
+                            size: 18,
+                            family: "Circular"
+                        }
+                    }
+                },
+                layout: {
+                    padding: {
+                        left: 40,
+                        right: 20,
+                        top: 20,
+                        bottom: 20
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            drawBorder: false,
+                            display: false
+                        },
+                        border: {
+                            display: false
+                        },
+                        ticks: {
+                            display: false
+                        },
+                        min: 0,
+                        max: 1
+                    },
+                    y: {
+                        stacked: "true",
+                        grid: {
+                            drawBorder: false,
+                            display: false
+                        },
+                        border: {
+                            display: false
+                        },
+                        ticks: {
+                            color: "rgb(0,0,0)",
+                            font: {
+                                size: 18,
+                                family: "Circular"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+
+    <script type="text/javascript">
+        window.setTimeout(function () {
+            window.location.reload();
+        }, 300000);
+    </script>
+</body>
+
+</html>

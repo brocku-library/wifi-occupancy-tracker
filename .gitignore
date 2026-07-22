@@ -1,0 +1,7 @@
+.gradle/
+.vscode/
+.idea/
+app/build/
+# app/src/main/python
+*.jar
+brockwifi.env
